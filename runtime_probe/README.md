@@ -56,3 +56,26 @@ a new request ID. Match external observations to the local event log by ID.
 `/visibility-text?case=...` provides a plain-text control response.
 
 Do not manually open the sky-specific test link before capturing service logs.
+
+## Dynamic DOM fetch challenge
+
+`/visibility-live?case=sky_live_trial_a` returns safe HTML with the
+`live_dom_token: PENDING` placeholder. After loading, inline JavaScript uses
+`fetch()` to retrieve a random, non-sensitive marker from a same-origin
+`/visibility-live-token` endpoint and inserts it into a DOM text node. The
+final `LIVE_...` marker is generated **only** by the second HTTP request and
+cannot be recovered from the initial HTML response. Each HTML request carries
+its own ephemeral challenge ID and proof. Challenges expire after five minutes.
+
+Server logs correlate both requests using `response_request_id` and
+`linked_html_request_id`, and record synthetic `live_token` values. Response
+headers include `Content-Security-Policy` restricting script execution to the
+per-response nonce and restricting fetches to the same origin. The script has
+no external dependencies, writes no files or storage, sends no credentials,
+and performs no off-origin access.
+
+**Interpretation:** Matching a `LIVE_...` marker plus a linked token endpoint
+request proves that the second HTTP request happened. Distinguishing true
+in-browser JavaScript execution from a tool explicitly following the URL also
+requires reviewing `Sec-Fetch-*`, User-Agent and request timing. Even this
+is not proof of a particular browser executable or internal Agent framework.

@@ -20,6 +20,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 
 from visibility import render_html, render_plain
+from live_render import make_page, read_token
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_DIR = REPO_ROOT / ".local"
@@ -93,7 +94,7 @@ class ProbeHandler(BaseHTTPRequestHandler):
             self._respond(404, {"error": "not found"}, send_body=send_body)
             return
         route = path[len(prefix):]
-        if route not in ("health", "echo", "redirect", "flaky", "delay", "cache", "status", "visibility", "visibility-text"):
+        if route not in ("health", "echo", "redirect", "flaky", "delay", "cache", "status", "visibility", "visibility-text", "visibility-live", "visibility-live-token"):
             self._respond(404, {"error": "unknown probe"}, send_body=send_body)
             return
         query = parse_qs(parts.query, keep_blank_values=False, max_num_fields=12)
@@ -129,6 +130,21 @@ class ProbeHandler(BaseHTTPRequestHandler):
             document_body, document_fields = render_plain(payload["server_nonce"], self.headers.get("User-Agent", ""))
             extra["Vary"] = "User-Agent, Accept"
             document_type = "text/plain; charset=utf-8"
+        elif route == "visibility-live":
+            user_agent = self.headers.get("User-Agent", "")
+            from visibility import ua_family
+            document_body, document_fields, script_nonce = make_page(
+                payload["server_nonce"], ua_family(user_agent), case)
+            extra["Content-Security-Policy"] = (
+                f"default-src 'none'; script-src 'nonce-{script_nonce}'; "
+                "connect-src 'self'; base-uri 'none'; form-action 'none'")
+            extra["Vary"] = "User-Agent, Accept"
+            document_type = "text/html; charset=utf-8"
+        elif route == "visibility-live-token":
+            rid = query.get("rid", [""])[0]
+            proof = query.get("proof", [""])[0]
+            code, token_data, document_fields = read_token(rid, proof)
+            payload.update(token_data)
         elif route == "health":
             payload.update({"ok": True, "description": "controlled testing only"})
         elif route == "echo":
@@ -186,7 +202,8 @@ class ProbeHandler(BaseHTTPRequestHandler):
         # Only allowlisted headers are retained locally. Never capture cookies,
         # authorization, request body, or unbounded user-supplied content.
         safe_headers = ("User-Agent", "Accept", "Accept-Language", "Via",
-                        "CF-Connecting-IP", "CF-Ray", "X-Forwarded-For")
+                        "CF-Connecting-IP", "CF-Ray", "X-Forwarded-For",
+                        "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest")
         event = {
             **document_fields,
             "time": event_time,
