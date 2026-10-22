@@ -29,10 +29,12 @@ def render_html(request_id: str, user_agent: str, case: str) -> tuple[bytes, dic
     """Return distinct content surfaces and independently logged markers."""
     family = ua_family(user_agent)
     csp_nonce = secrets.token_urlsafe(18)
-    v = lambda prefix: f'{prefix}_{request_id}'
-    # DOM_OK_... is deliberately absent as a contiguous literal in the
-    # response source. Only executing the inline JS creates the DOM text.
-    code = '68,79,77,95,79,75,95'
+    layers = ('TITLE','META','JSONLD','VISIBLE','ARIA','CSS_HIDDEN','HTML_HIDDEN','TEMPLATE','NOSCRIPT','COMMENT','DOM_OK')
+    independent_tokens = {prefix: secrets.token_hex(8) for prefix in layers}
+    v = lambda prefix: f'{prefix}_{independent_tokens[prefix]}'
+    # The full DOM-only marker is generated from numeric character codes;
+    # it is not present as an intact string in the original HTML source.
+    code = ','.join(str(ord(char)) for char in v('DOM_OK'))
     doc = f'''<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -62,16 +64,14 @@ def render_html(request_id: str, user_agent: str, case: str) -> tuple[bytes, dic
 <p id="js-slot"></p>
 </main>
 <!-- html_comment_token: {v('COMMENT')} -->
-<script nonce="{csp_nonce}">document.addEventListener('DOMContentLoaded', () => {{const p=document.getElementById('js-slot');p.textContent='dom_rendered_token: '+String.fromCharCode({code})+document.body.dataset.requestId;}});</script>
+<script nonce="{csp_nonce}">document.addEventListener('DOMContentLoaded', () => {{const p=document.getElementById('js-slot');p.textContent='dom_rendered_token: '+String.fromCharCode({code});}});</script>
 </body>
 </html>
 '''
     metadata = {
         'response_request_id': request_id,
         'ua_family': family,
-        'visible_marker': v('VISIBLE'),
-        'comment_marker': v('COMMENT'),
-        'hidden_marker': v('CSS_HIDDEN'),
+        **{prefix.lower() + '_marker': v(prefix) for prefix in layers},
         'expected_dom_marker': v('DOM_OK'),
         'case': case,
         'csp_nonce': csp_nonce,
