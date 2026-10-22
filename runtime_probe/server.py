@@ -19,6 +19,8 @@ import threading
 import time
 from urllib.parse import parse_qs, urlsplit
 
+from visibility import render_html, render_plain
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_DIR = REPO_ROOT / ".local"
 LOCAL_DIR.mkdir(mode=0o700, exist_ok=True)
@@ -61,16 +63,17 @@ class ProbeHandler(BaseHTTPRequestHandler):
         self._respond(405, {"error": "read-only test service"})
 
     def _respond(self, status: int, payload: dict, *, extra: dict[str, str] | None = None,
-                 send_body: bool = True) -> None:
-        body = (json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n").encode()
+                 send_body: bool = True, raw_body: bytes | None = None,
+                 content_type: str = "application/json; charset=utf-8") -> None:
+        body = raw_body if raw_body is not None else (json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n").encode()
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", (extra or {}).get("Cache-Control", "no-store"))
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'none'")
+        self.send_header("Content-Security-Policy", (extra or {}).get("Content-Security-Policy", "default-src 'none'"))
         for key, val in (extra or {}).items():
-            if key != "Cache-Control":
+            if key not in ("Cache-Control", "Content-Security-Policy"):
                 self.send_header(key, val)
         self.end_headers()
         if send_body:
@@ -90,7 +93,7 @@ class ProbeHandler(BaseHTTPRequestHandler):
             self._respond(404, {"error": "not found"}, send_body=send_body)
             return
         route = path[len(prefix):]
-        if route not in ("health", "echo", "redirect", "flaky", "delay", "cache", "status"):
+        if route not in ("health", "echo", "redirect", "flaky", "delay", "cache", "status", "visibility", "visibility-text"):
             self._respond(404, {"error": "unknown probe"}, send_body=send_body)
             return
         query = parse_qs(parts.query, keep_blank_values=False, max_num_fields=12)
@@ -113,7 +116,20 @@ class ProbeHandler(BaseHTTPRequestHandler):
         extra: dict[str, str] = {}
         code = 200
         delay_s = 0.0
-        if route == "health":
+        document_body: bytes | None = None
+        document_type: str = "application/json; charset=utf-8"
+        document_fields: dict[str, str] = {}
+        if route == "visibility":
+            document_body, document_fields = render_html(payload["server_nonce"], self.headers.get("User-Agent", ""), case)
+            csp_nonce = document_fields.pop("csp_nonce")
+            extra["Content-Security-Policy"] = f"default-src 'none'; script-src 'nonce-{csp_nonce}'; style-src 'nonce-{csp_nonce}'; base-uri 'none'; form-action 'none'"
+            extra["Vary"] = "User-Agent, Accept"
+            document_type = "text/html; charset=utf-8"
+        elif route == "visibility-text":
+            document_body, document_fields = render_plain(payload["server_nonce"], self.headers.get("User-Agent", ""))
+            extra["Vary"] = "User-Agent, Accept"
+            document_type = "text/plain; charset=utf-8"
+        elif route == "health":
             payload.update({"ok": True, "description": "controlled testing only"})
         elif route == "echo":
             payload["marker"] = "ECHO_PROBE_OK"
@@ -172,6 +188,7 @@ class ProbeHandler(BaseHTTPRequestHandler):
         safe_headers = ("User-Agent", "Accept", "Accept-Language", "Via",
                         "CF-Connecting-IP", "CF-Ray", "X-Forwarded-For")
         event = {
+            **document_fields,
             "time": event_time,
             "method": self.command,
             "route": route,
@@ -188,7 +205,8 @@ class ProbeHandler(BaseHTTPRequestHandler):
                 f.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
         if delay_s:
             time.sleep(delay_s)
-        self._respond(code, payload, extra=extra, send_body=send_body)
+        self._respond(code, payload, extra=extra, send_body=send_body,
+                      raw_body=document_body, content_type=document_type)
 
 
 class ProbeServer(ThreadingHTTPServer):

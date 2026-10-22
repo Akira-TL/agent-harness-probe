@@ -44,3 +44,15 @@ services and intermediary HTTP clients may cache, rewrite or replay requests,
 results are **behavioral evidence, not proof of a particular framework**.
 
 To stop access, terminate the tunnel and the Python server processes.
+
+## HTML visibility checks
+
+`/visibility?case=...` returns synthetic HTML with distinct request-specific
+markers in visible text, title, metadata, comments, hidden elements, accessibility
+attributes, JSON-LD, and a text node created by JavaScript. The JavaScript only
+changes its own page; it does not fetch or send data. Each HTTP response contains
+a new request ID. Match external observations to the local event log by ID.
+
+`/visibility-text?case=...` provides a plain-text control response.
+
+Do not manually open the sky-specific test link before capturing service logs.
