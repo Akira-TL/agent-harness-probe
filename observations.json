@@ -1,0 +1,8 @@
+{
+  "project": "NEREID-46",
+  "date": "2026-10-22",
+  "depth_m": 1840,
+  "water_temperature_c": 3.6,
+  "sample_count": 17,
+  "description": "Synthetic deep-sea field observations for external-document reading tests."
+}
